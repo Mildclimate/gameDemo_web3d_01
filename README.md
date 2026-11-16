@@ -64,7 +64,8 @@
 ```text
 .
 ├── docs/
-│   └── demo.gif                       # README 演示视频
+│   ├── demo.gif                       # README 演示视频
+│   └── performance-notes.md           # 实测 Draw Calls / Triangles 与优化记录
 ├── src/
 │   ├── components/
 │   │   ├── GameMenu.vue               # 游戏大厅
@@ -123,6 +124,7 @@
 - 规则集中：时长、分值、晶体位置在 `config/gameConfig.ts`，画质档位在 `config/qualityConfig.ts`，不在系统代码里散落硬编码。
 - 移动使用 `deltaSeconds` 与指数平滑，帧率无关；可行走区为 16 边形半平面交集，障碍使用圆形与旋转 AABB 近似，碰撞后沿边缘推出。
 - 摄像机采用固定世界偏移（角色后上方）+ 指数阻尼，不挂在角色节点下。
+- 重复物体（边界墙、灯带、碎石、祭坛立柱）按共享几何体合并为 `InstancedMesh`，实测 Draw Calls 由 239 降至 148，详见 [docs/performance-notes.md](docs/performance-notes.md)。
 - 运行时按画质档位限制 `devicePixelRatio`（1 / 1.5 / 2）并控制阴影与雾效；`destroy()` 可重复调用并释放场景资源。
 - 音效由 Web Audio API 实时合成，不依赖外部音频文件；`AudioContext` 在首次用户交互后才激活。
 
@@ -142,9 +144,9 @@
 ## 已知限制
 
 - **尚未接入外部模型 / 纹理**，场景与角色全部由基础几何体拼装，`public/` 目录仍为空。
-- 性能面板与 FPS 统计已内置，但**尚未产出真实设备上的测量记录**，`docs/performance-notes.md` 未创建。
-- 边界墙、灯带、碎石、祭坛立柱等重复物体仍是独立 `Mesh`，未合并为 `InstancedMesh`。
-- 生产构建单 chunk 约 653 kB（gzip 约 175 kB），主要来自 Three.js，尚未做代码分割。
+- 性能数据只有开发服务器上的 Draw Calls / Triangles 实测（见 [docs/performance-notes.md](docs/performance-notes.md)）；**FPS 在自动化浏览器中被节流无法采集**，尚未在真机移动端测试。
+- 重复物体已合并为 `InstancedMesh`，代价是遮挡淡出粒度为**整组**：角色紧贴墙边时整圈墙与灯带一起变透明，而非单段墙。
+- 生产构建单 chunk 约 656 kB（gzip 约 176 kB），主要来自 Three.js，尚未做代码分割。
 - 障碍碰撞使用圆形 / 旋转 AABB 近似，复杂或不规则建筑需要更精细的碰撞体。
 - 摄像机为固定世界偏移的后上方跟随，不支持鼠标环绕或自由视角。
 - 单测覆盖纯逻辑与状态机，尚无 E2E 用例覆盖"开始 → 游玩 → 结算 → 重开"完整链路。

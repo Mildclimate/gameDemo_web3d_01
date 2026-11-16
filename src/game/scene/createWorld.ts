@@ -5,13 +5,15 @@ import {
   DirectionalLight,
   Group,
   HemisphereLight,
+  InstancedMesh,
   Mesh,
   MeshStandardMaterial,
+  Object3D,
   OctahedronGeometry,
   PointLight,
   TorusGeometry,
+  type BufferGeometry,
   type Material,
-  type Object3D,
 } from 'three'
 
 import { ARENA } from './arenaLayout'
@@ -21,6 +23,44 @@ export interface World {
   /** 可能挡住角色的实体（边界墙、遗迹、石柱等），供遮挡透明系统使用。 */
   readonly occluders: readonly Mesh[]
   update(deltaSeconds: number): void
+}
+
+/** 单个实例在世界中的位置、绕 Y 轴旋转与缩放。 */
+interface InstanceTransform {
+  readonly position: readonly [number, number, number]
+  readonly rotationY?: number
+  readonly scale?: readonly [number, number, number]
+}
+
+/**
+ * 把一批共享几何体 + 材质的重复物体合并成单个 InstancedMesh。
+ * 合并后整组共享一份材质，遮挡系统只能整组淡出，因此只用于
+ * 同质重复、且成组淡出不会视觉断裂的物体（边界墙、碎石、祭坛立柱）。
+ */
+function createInstancedMesh(
+  parent: Object3D,
+  geometry: BufferGeometry,
+  material: Material,
+  transforms: readonly InstanceTransform[],
+): InstancedMesh {
+  const mesh = new InstancedMesh(geometry, material, transforms.length)
+  const dummy = new Object3D()
+
+  transforms.forEach((transform, index) => {
+    dummy.position.set(...transform.position)
+    dummy.rotation.set(0, transform.rotationY ?? 0, 0)
+    const scale = transform.scale
+    if (scale) dummy.scale.set(...scale)
+    else dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    mesh.setMatrixAt(index, dummy.matrix)
+  })
+
+  mesh.instanceMatrix.needsUpdate = true
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  parent.add(mesh)
+  return mesh
 }
 
 function createMaterials() {
@@ -126,35 +166,36 @@ export function createWorld(): World {
 
   // 一圈高低错落的边界墙，明确可行走范围
   const boundaryRadius = ARENA.boundaryRadius
+  const wallTransforms: InstanceTransform[] = []
+  const wallTrimTransforms: InstanceTransform[] = []
+
   for (let index = 0; index < ARENA.boundarySegments; index += 1) {
     const angle = (index / ARENA.boundarySegments) * Math.PI * 2
     const height = index % 4 === 0 ? 1.15 : 2.05
     const x = Math.sin(angle) * boundaryRadius
     const z = Math.cos(angle) * boundaryRadius
 
-    occluders.push(
-      addBox(
-        root,
-        materials.stone,
-        [ARENA.wallWidth, height, ARENA.wallThickness],
-        [x, height / 2, z],
-        angle,
-      ),
-    )
+    wallTransforms.push({
+      position: [x, height / 2, z],
+      rotationY: angle,
+      scale: [ARENA.wallWidth, height, ARENA.wallThickness],
+    })
 
     if (index % 2 === 0) {
       const trimRadius = boundaryRadius - 0.28
-      occluders.push(
-        addBox(
-          root,
-          materials.trim,
-          [4.6, 0.07, 0.16],
-          [Math.sin(angle) * trimRadius, height - 0.22, Math.cos(angle) * trimRadius],
-          angle,
-        ),
-      )
+      wallTrimTransforms.push({
+        position: [Math.sin(angle) * trimRadius, height - 0.22, Math.cos(angle) * trimRadius],
+        rotationY: angle,
+        scale: [4.6, 0.07, 0.16],
+      })
     }
   }
+
+  // 16 段墙 + 8 条灯带原本是 24 个 Mesh（含阴影共 48 次 draw call），
+  // 各自几何体完全相同，合并为 2 个 InstancedMesh。
+  // 遮挡时整组淡出：墙与灯带同时变透明，不会出现灯带悬空的割裂感。
+  occluders.push(createInstancedMesh(root, unitBox, materials.stone, wallTransforms))
+  occluders.push(createInstancedMesh(root, unitBox, materials.trim, wallTrimTransforms))
 
   // 遗迹建筑：由远及近形成塔楼、拱门、残墙和断柱的层次
   const ruins = new Group()
@@ -183,16 +224,23 @@ export function createWorld(): World {
   const fallenColumn = addCylinder(ruins, materials.stone, 0.58, 0.7, 4.4, [-5.5, 0.68, 8.5])
   fallenColumn.rotation.z = Math.PI / 2
 
-  // 散落碎石，让地面细节不显得空旷
+  // 散落碎石，让地面细节不显得空旷（4 块合并为 1 个 InstancedMesh）
   const rubble: ReadonlyArray<readonly [number, number, number, number]> = [
     [-11.4, 4.2, 1.1, 0.4],
     [11.8, 2.4, 0.9, -0.5],
     [4.2, 9.8, 0.8, 0.7],
     [-1.2, 12.1, 0.6, 0.2],
   ]
-  for (const [x, z, size, rotation] of rubble) {
-    addBox(ruins, materials.stone, [size, size * 0.75, size * 0.9], [x, size * 0.375, z], rotation)
-  }
+  createInstancedMesh(
+    ruins,
+    unitBox,
+    materials.stone,
+    rubble.map(([x, z, size, rotation]) => ({
+      position: [x, (size * 0.75) / 2, z] as const,
+      rotationY: rotation,
+      scale: [size, size * 0.75, size * 0.9] as const,
+    })),
+  )
 
   // 遗迹中的实心 Mesh 都可能挡住角色，统一登记为遮挡体
   ruins.traverse((child) => {
@@ -208,13 +256,19 @@ export function createWorld(): World {
   addCylinder(relic, materials.stone, 2.0, 2.5, 0.55, [0, 0.98, 0])
 
   const pylonCount = 4
+  const pylonTransforms: InstanceTransform[] = []
+  const pylonTrimTransforms: InstanceTransform[] = []
   for (let index = 0; index < pylonCount; index += 1) {
     const angle = (index / pylonCount) * Math.PI * 2 + Math.PI / 4
     const x = Math.cos(angle) * 2.35
     const z = Math.sin(angle) * 2.35
-    occluders.push(addBox(relic, materials.metal, [0.36, 2.1, 0.36], [x, 1.35, z]))
-    occluders.push(addBox(relic, materials.trim, [0.36, 0.14, 0.36], [x, 2.45, z]))
+    pylonTransforms.push({ position: [x, 1.35, z], scale: [0.36, 2.1, 0.36] })
+    pylonTrimTransforms.push({ position: [x, 2.45, z], scale: [0.36, 0.14, 0.36] })
   }
+
+  // 4 根立柱 + 4 个柱顶灯帽：几何体相同，各合并为 1 个 InstancedMesh
+  occluders.push(createInstancedMesh(relic, unitBox, materials.metal, pylonTransforms))
+  occluders.push(createInstancedMesh(relic, unitBox, materials.trim, pylonTrimTransforms))
 
   const innerRing = new Mesh(new TorusGeometry(1.7, 0.055, 8, 72), materials.trim)
   innerRing.rotation.x = Math.PI / 2
