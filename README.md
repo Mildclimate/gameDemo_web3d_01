@@ -1,5 +1,7 @@
 # ASTRA: Lost Relic
 
+**[在线体验](https://ba39eb8a.gamedemo-web3d-01.pages.dev)** · 无需安装，浏览器直接打开
+
 ## 演示
 
 ![演示视频](docs/demo.gif)
