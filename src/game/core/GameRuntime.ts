@@ -7,15 +7,17 @@ import {
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
+  Vector3,
   WebGLRenderer,
 } from 'three'
 
 import type { GameCommand, GameEvent, GameQuality, GameState } from '../../types/game'
 import { QUALITY_PRESETS, type QualitySettings, DEFAULT_QUALITY } from '../config/qualityConfig'
-import { COLLECTIBLE_POSITIONS } from '../config/gameConfig'
+import { pickRandomCollectiblePositions } from '../config/gameConfig'
 import { GameSession } from '../core/GameSession'
 import { Collectible } from '../entities/Collectible'
 import { Player } from '../entities/Player'
+import { BurstEffect } from '../effects/BurstEffect'
 import { InputManager } from '../input/InputManager'
 import { KeyboardInput } from '../input/KeyboardInput'
 import { TouchInput } from '../input/TouchInput'
@@ -69,6 +71,8 @@ export class GameRuntime {
   private readonly collectiblesRoot: Group
   private readonly collectibles: Collectible[]
   private readonly collection: CollectionSystem
+  private readonly bursts: BurstEffect[] = []
+  private readonly burstsRoot: Group
 
   private readonly highScore: HighScoreStorage
   private readonly audio: AudioManager
@@ -128,7 +132,11 @@ export class GameRuntime {
     this.collectiblesRoot.name = 'collectibles'
     this.scene.add(this.collectiblesRoot)
 
-    this.collectibles = COLLECTIBLE_POSITIONS.map((pos) => {
+    this.burstsRoot = new Group()
+    this.burstsRoot.name = 'bursts'
+    this.scene.add(this.burstsRoot)
+
+    this.collectibles = pickRandomCollectiblePositions().map((pos) => {
       const c = new Collectible(pos.x, pos.z)
       this.collectiblesRoot.add(c.object)
       return c
@@ -173,10 +181,32 @@ export class GameRuntime {
       onRestarted: () => this.emit({ type: 'RESTARTED' }),
     })
 
-    // CollectionSystem：收集时播放音效
+    // CollectionSystem：收集时播放音效 + 粒子爆裂 + 镜头震动 + 分数飘字
     this.collection = new CollectionSystem(this.session, {
-      onCollected: () => {
+      onCollected: (crystal) => {
         this.audio.playCollect()
+
+        // 粒子爆裂
+        const origin = new Vector3(
+          crystal.position.x,
+          1.3,
+          crystal.position.z,
+        )
+        const burst = new BurstEffect(origin)
+        this.burstsRoot.add(burst.object)
+        this.bursts.push(burst)
+
+        // 镜头震动
+        this.cameraFollow.shake(0.14, 0.18)
+
+        // 分数飘字：把晶体世界坐标投影到屏幕归一化坐标
+        const screen = this.projectToScreen(origin)
+        this.emit({
+          type: 'SCORE_POPUP',
+          x: screen.x,
+          y: screen.y,
+          score: crystal.scoreValue,
+        })
       },
     })
 
@@ -364,6 +394,9 @@ export class GameRuntime {
     this.keyboard.destroy()
     this.audio.dispose()
 
+    for (const burst of this.bursts) burst.dispose()
+    this.bursts.length = 0
+
     if (this.frameId !== null) {
       cancelAnimationFrame(this.frameId)
       this.frameId = null
@@ -388,7 +421,45 @@ export class GameRuntime {
     this.cameraFollow.snapTo(this.player.object.position)
     this.elapsedSeconds = 0
     this.lastFrameTime = performance.now()
-    for (const c of this.collectibles) c.reset()
+    for (const burst of this.bursts) {
+      this.burstsRoot.remove(burst.object)
+      burst.dispose()
+    }
+    this.bursts.length = 0
+    const positions = pickRandomCollectiblePositions()
+    for (let i = 0; i < this.collectibles.length; i += 1) {
+      const collectible = this.collectibles[i]
+      const pos = positions[i]
+      if (!collectible || !pos) continue
+      collectible.setPosition(pos.x, pos.z)
+      collectible.reset()
+    }
+  }
+
+  /**
+   * 把世界坐标投影到屏幕归一化坐标（x, y 均为 0~1，左上角为原点）。
+   * 用于把分数飘字定位到晶体所在的屏幕位置。
+   */
+  private projectToScreen(world: Vector3): { x: number; y: number } {
+    const projected = world.clone().project(this.camera)
+    return {
+      x: (projected.x + 1) / 2,
+      y: (1 - projected.y) / 2,
+    }
+  }
+
+  /** 更新所有粒子爆裂，移除并释放已结束的。 */
+  private updateBursts(deltaSeconds: number): void {
+    for (let i = this.bursts.length - 1; i >= 0; i -= 1) {
+      const burst = this.bursts[i]
+      if (!burst) continue
+      burst.update(deltaSeconds)
+      if (burst.isDead) {
+        this.burstsRoot.remove(burst.object)
+        burst.dispose()
+        this.bursts.splice(i, 1)
+      }
+    }
   }
 
   /** 应用画质档位（构造时 + 运行时 SET_QUALITY 命令调用）。 */
@@ -457,6 +528,7 @@ export class GameRuntime {
     if (state !== 'menu' && state !== 'error') {
       this.elapsedSeconds += deltaSeconds
       for (const c of this.collectibles) c.update(deltaSeconds, this.elapsedSeconds)
+      this.updateBursts(deltaSeconds)
     }
 
     if (state === 'playing' || state === 'paused') {

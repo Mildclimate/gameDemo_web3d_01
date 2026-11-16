@@ -27,7 +27,13 @@ export class Collectible {
   private readonly baseY: number
   private readonly elapsedOffset: number
 
+  /** 收集爆裂动画时长（秒）。 */
+  private static readonly BURST_DURATION = 0.32
+
   private _collected = false
+  private collectElapsed = 0
+  private readonly crystalBaseScale = 0.8
+  private readonly haloBaseScale = 1
 
   constructor(x: number, z: number, scoreValue: number = COLLECTIBLE_SCORE) {
     this.id = `crystal_${collectibleIdCounter++}`
@@ -89,30 +95,65 @@ export class Collectible {
     return this._collected
   }
 
-  /** 收集后隐藏自己（保留 object 节点供场景引用）。 */
+  /** 收集后播放爆裂动画再隐藏，避免瞬间消失没有反馈。 */
   collect(): void {
     if (this._collected) return
     this._collected = true
-    this.object.visible = false
+    this.collectElapsed = 0
   }
 
-  /** 重置到未收集状态并显示。 */
+  /** 重置到未收集状态并显示，恢复初始缩放。 */
   reset(): void {
     this._collected = false
+    this.collectElapsed = 0
     this.object.visible = true
+    this.crystalMesh.scale.set(this.crystalBaseScale, 1.3, this.crystalBaseScale)
+    ;(this.crystalMesh.material as MeshStandardMaterial).opacity = 0.95
+    this.haloMesh.scale.setScalar(this.haloBaseScale)
+    ;(this.haloMesh.material as MeshStandardMaterial).opacity = 0.6
+    this.light.intensity = 4
   }
 
-  /** 每帧动画更新：旋转 + 浮动。 */
+  /** 重新放置晶体（每局随机布局时调用）。 */
+  setPosition(x: number, z: number): void {
+    this.object.position.set(x, 0, z)
+  }
+
+  /** 每帧动画更新：未收集时旋转 + 浮动；收集后播放爆裂动画。 */
   update(deltaSeconds: number, elapsedSeconds: number): void {
-    if (this._collected) return
+    if (!this._collected) {
+      const t = elapsedSeconds + this.elapsedOffset
+      this.crystalMesh.rotation.y += deltaSeconds * 1.6
+      this.crystalMesh.rotation.x = Math.sin(t * 0.8) * 0.25
+      this.crystalMesh.position.y = this.baseY + Math.sin(t * 1.8) * 0.2
 
-    const t = elapsedSeconds + this.elapsedOffset
-    this.crystalMesh.rotation.y += deltaSeconds * 1.6
-    this.crystalMesh.rotation.x = Math.sin(t * 0.8) * 0.25
-    this.crystalMesh.position.y = this.baseY + Math.sin(t * 1.8) * 0.2
+      this.haloMesh.rotation.z += deltaSeconds * 0.9
+      this.light.intensity = 3 + Math.sin(t * 2.2) * 1.2
+      return
+    }
 
-    this.haloMesh.rotation.z += deltaSeconds * 0.9
-    this.light.intensity = 3 + Math.sin(t * 2.2) * 1.2
+    // 收集爆裂：晶体放大 → 淡出，光环扩张 → 淡出，点光源闪一下
+    this.collectElapsed += deltaSeconds
+    const progress = Math.min(this.collectElapsed / Collectible.BURST_DURATION, 1)
+    const ease = progress * progress // ease-in，前慢后快地消散
+
+    const scaleBoost = 1 + ease * 1.6
+    this.crystalMesh.scale.set(
+      this.crystalBaseScale * scaleBoost,
+      1.3 * scaleBoost,
+      this.crystalBaseScale * scaleBoost,
+    )
+    ;(this.crystalMesh.material as MeshStandardMaterial).opacity = 0.95 * (1 - ease)
+
+    const haloBoost = 1 + ease * 2.4
+    this.haloMesh.scale.setScalar(this.haloBaseScale * haloBoost)
+    ;(this.haloMesh.material as MeshStandardMaterial).opacity = 0.6 * (1 - ease)
+
+    this.light.intensity = 4 * (1 - ease)
+
+    if (progress >= 1) {
+      this.object.visible = false
+    }
   }
 
   /** 世界位置（x, z 平面）。 */

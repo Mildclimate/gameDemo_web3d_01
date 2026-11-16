@@ -33,6 +33,11 @@ export class CameraFollowSystem {
   private readonly desiredLookTarget = new Vector3()
   private readonly smoothedLookTarget = new Vector3()
 
+  // 镜头震动：用于收集命中反馈
+  private shakeRemaining = 0
+  private shakeIntensity = 0
+  private shakeDuration = 0
+
   constructor(camera: PerspectiveCamera, options: Partial<CameraFollowOptions> = {}) {
     this.camera = camera
     this.offset = options.offset?.clone() ?? DEFAULT_OPTIONS.offset.clone()
@@ -51,11 +56,29 @@ export class CameraFollowSystem {
     this.camera.lookAt(this.smoothedLookTarget)
   }
 
+  /** 触发一次镜头震动（用于收集等正反馈）。 */
+  shake(intensity: number, duration: number): void {
+    this.shakeIntensity = Math.max(this.shakeIntensity, intensity)
+    this.shakeDuration = Math.max(this.shakeDuration, duration)
+    this.shakeRemaining = duration
+  }
+
   update(target: Vector3, deltaSeconds: number): void {
     this.desiredPosition.copy(target).add(this.offset)
 
     const positionBlend = 1 - Math.exp(-this.positionLambda * deltaSeconds)
     this.camera.position.lerp(this.desiredPosition, positionBlend)
+
+    // 镜头震动：在平滑位置上叠加随机偏移，强度随时间线性衰减
+    if (this.shakeRemaining > 0) {
+      const shakeT = Math.max(this.shakeRemaining / this.shakeDuration, 0)
+      const magnitude = this.shakeIntensity * shakeT
+      this.camera.position.x += (Math.random() - 0.5) * magnitude * 2
+      this.camera.position.y += (Math.random() - 0.5) * magnitude * 2
+      this.camera.position.z += (Math.random() - 0.5) * magnitude * 2
+      this.shakeRemaining = Math.max(this.shakeRemaining - deltaSeconds, 0)
+      if (this.shakeRemaining === 0) this.shakeIntensity = 0
+    }
 
     this.desiredLookTarget.set(target.x, target.y + this.lookHeight, target.z)
     const lookBlend = 1 - Math.exp(-this.lookLambda * deltaSeconds)

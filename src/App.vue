@@ -24,6 +24,15 @@ const highScore = ref(0)
 const currentQuality = ref<GameQuality>('medium')
 const isMuted = ref(false)
 
+interface ScorePopup {
+  readonly id: number
+  readonly x: number
+  readonly y: number
+  readonly score: number
+}
+const scorePopups = ref<ScorePopup[]>([])
+let popupIdCounter = 0
+
 const QUALITY_OPTIONS: ReadonlyArray<{ value: GameQuality; label: MessageKey }> = [
   { value: 'low', label: 'app.qualityLow' },
   { value: 'medium', label: 'app.qualityMedium' },
@@ -93,6 +102,7 @@ function handleStart(): void {
   score.value = 0
   collected.value = 0
   hasEnded.value = false
+  scorePopups.value = []
   send('START')
 }
 
@@ -108,6 +118,7 @@ function handleRestart(): void {
   score.value = 0
   collected.value = 0
   hasEnded.value = false
+  scorePopups.value = []
   send('RESTART')
 }
 
@@ -132,6 +143,14 @@ function handleRuntimeEvent(event: GameEvent): void {
       score.value = event.score
       collected.value = event.collected
       break
+    case 'SCORE_POPUP': {
+      const id = popupIdCounter++
+      scorePopups.value.push({ id, x: event.x, y: event.y, score: event.score })
+      window.setTimeout(() => {
+        scorePopups.value = scorePopups.value.filter((p) => p.id !== id)
+      }, 900)
+      break
+    }
     case 'TIMER_UPDATED':
       remainingSeconds.value = event.remainingSeconds
       break
@@ -327,6 +346,18 @@ onBeforeUnmount(() => {
                 {{ t('common.backToLobby') }}
               </button>
             </div>
+          </div>
+        </div>
+
+        <!-- ========== 分数飘字 ========== -->
+        <div class="score-popups" aria-hidden="true">
+          <div
+            v-for="popup in scorePopups"
+            :key="popup.id"
+            class="score-popups__item"
+            :style="{ left: `${popup.x * 100}%`, top: `${popup.y * 100}%` }"
+          >
+            +{{ popup.score }}
           </div>
         </div>
 
@@ -742,6 +773,44 @@ onBeforeUnmount(() => {
 .hud-btn--exit:hover {
   background: rgba(255, 130, 130, 0.16);
   border-color: rgba(255, 130, 130, 0.6);
+}
+
+/* ==================== 分数飘字 ==================== */
+.score-popups {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.score-popups__item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 1.4rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #9df6ff;
+  text-shadow:
+    0 0 10px rgba(47, 216, 255, 0.9),
+    0 0 20px rgba(47, 216, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+  animation: score-pop 0.9s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+@keyframes score-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.6);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, -60%) scale(1.15);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -140%) scale(1);
+  }
 }
 
 /* ==================== Overlays ==================== */

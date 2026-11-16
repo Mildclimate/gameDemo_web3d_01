@@ -17,6 +17,7 @@ export type GameEvent =
   | { type: 'SCORE_CHANGED'; score: number; collected: number }
   | { type: 'TIMER_UPDATED'; remainingSeconds: number }
   | { type: 'COLLECTIBLE_COLLECTED'; collected: number; total: number; score: number }
+  | { type: 'SCORE_POPUP'; x: number; y: number; score: number }
   | { type: 'GAME_WON'; score: number; collected: number; total: number }
   | { type: 'GAME_OVER'; score: number; collected: number; total: number }
   | { type: 'EXIT_TO_MENU' }
