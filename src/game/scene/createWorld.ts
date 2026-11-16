@@ -4,6 +4,7 @@ import {
   CylinderGeometry,
   DirectionalLight,
   Group,
+  HemisphereLight,
   Mesh,
   MeshStandardMaterial,
   OctahedronGeometry,
@@ -235,11 +236,14 @@ export function createWorld(): World {
   crystalLight.position.y = 3.4
   relic.add(crystalLight)
 
-  // 基础灯光：环境光打底，方向光提供主阴影，冷色轮廓光拉开层次
-  const ambientLight = new AmbientLight('#4f7894', 0.9)
+  // 基础灯光：半球光模拟天光+地面反射打底，环境光填充暗角，方向光提供主阴影，补光软化阴影，轮廓光拉开层次
+  const hemisphereLight = new HemisphereLight('#8fb8d4', '#1a2a38', 0.85)
+  root.add(hemisphereLight)
+
+  const ambientLight = new AmbientLight('#6a90a8', 0.6)
   root.add(ambientLight)
 
-  const keyLight = new DirectionalLight('#d9f1ff', 2.4)
+  const keyLight = new DirectionalLight('#d9f1ff', 2.8)
   keyLight.position.set(-13, 19, 9)
   keyLight.castShadow = true
   keyLight.shadow.mapSize.set(2048, 2048)
@@ -254,7 +258,12 @@ export function createWorld(): World {
   keyLight.target.position.set(0, 0.5, 0)
   root.add(keyLight, keyLight.target)
 
-  const rimLight = new DirectionalLight('#2f8cb5', 1.1)
+  // 补光：从主光的反方向弱化阴影死黑
+  const fillLight = new DirectionalLight('#a8c8e0', 1.0)
+  fillLight.position.set(10, 8, -6)
+  root.add(fillLight)
+
+  const rimLight = new DirectionalLight('#5fb8d8', 1.5)
   rimLight.position.set(12, 8, -16)
   root.add(rimLight)
 

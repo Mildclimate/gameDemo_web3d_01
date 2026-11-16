@@ -101,10 +101,10 @@ export class GameRuntime {
     })
     this.renderer.outputColorSpace = SRGBColorSpace
     this.renderer.toneMapping = ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.05
+    this.renderer.toneMappingExposure = 1.25
 
     this.scene = new Scene()
-    this.scene.background = new Color('#050a14')
+    this.scene.background = new Color('#0a1420')
 
     this.camera = new PerspectiveCamera(CAMERA_FOV, 16 / 9, CAMERA_NEAR, CAMERA_FAR)
 
@@ -408,7 +408,7 @@ export class GameRuntime {
     this.applyShadowToWorld(settings)
 
     // 3. 雾效
-    this.scene.fog = new Fog('#050a14', settings.fogNear, settings.fogFar)
+    this.scene.fog = new Fog('#0a1420', settings.fogNear, settings.fogFar)
 
     // 4. pixelRatio 上限：resize 里会重新 clamp 并调用 setPixelRatio
     this.resize()
