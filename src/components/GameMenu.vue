@@ -1,4 +1,8 @@
 <script setup lang="ts">
+defineProps<{
+  highScore?: number
+}>()
+
 const emit = defineEmits<{ start: [] }>()
 </script>
 
@@ -16,9 +20,13 @@ const emit = defineEmits<{ start: [] }>()
         在废弃的星际遗迹中探索。使用 WASD 或方向键控制角色移动，摄像机将自动跟随。
       </p>
 
+      <div v-if="highScore && highScore > 0" class="game-menu__record">
+        本地最高分：<strong>{{ highScore }}</strong>
+      </div>
+
       <button class="game-menu__start" type="button" @click="emit('start')">开始探索</button>
 
-      <p class="game-menu__note">进入后可随时使用底部按钮返回大厅。</p>
+      <p class="game-menu__note">进入后可随时使用底部按钮返回大厅，或按 Esc 暂停。</p>
     </section>
   </div>
 </template>
@@ -76,6 +84,18 @@ const emit = defineEmits<{ start: [] }>()
   font-size: 0.88rem;
   line-height: 1.7;
   color: var(--color-text-muted);
+}
+
+.game-menu__record {
+  margin-top: 12px;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.game-menu__record strong {
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .game-menu__start {

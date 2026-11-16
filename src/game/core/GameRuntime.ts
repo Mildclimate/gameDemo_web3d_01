@@ -10,19 +10,23 @@ import {
   WebGLRenderer,
 } from 'three'
 
-import type { GameCommand, GameEvent, GameState } from '../../types/game'
+import type { GameCommand, GameEvent, GameQuality, GameState } from '../../types/game'
+import { QUALITY_PRESETS, type QualitySettings, DEFAULT_QUALITY } from '../config/qualityConfig'
 import { COLLECTIBLE_POSITIONS } from '../config/gameConfig'
 import { GameSession } from '../core/GameSession'
 import { Collectible } from '../entities/Collectible'
 import { Player } from '../entities/Player'
+import { InputManager } from '../input/InputManager'
 import { KeyboardInput } from '../input/KeyboardInput'
+import { TouchInput } from '../input/TouchInput'
 import { createWorld, type World } from '../scene/createWorld'
 import { CameraFollowSystem } from '../systems/CameraFollowSystem'
 import { CollectionSystem } from '../systems/CollectionSystem'
 import { MovementSystem } from '../systems/MovementSystem'
 import { disposeObjectTree } from '../utils/disposeScene'
+import { HighScoreStorage } from '../utils/HighScoreStorage'
+import { AudioManager } from '../audio/AudioManager'
 
-const MAX_PIXEL_RATIO = 2
 const MAX_FRAME_DELTA_SECONDS = 0.1
 const CAMERA_FOV = 50
 const CAMERA_NEAR = 0.1
@@ -33,9 +37,16 @@ export interface GameRuntimeOptions {
   onEvent?: (event: GameEvent) => void
 }
 
+export interface PerformanceStats {
+  readonly drawCalls: number
+  readonly triangles: number
+  readonly geometries: number
+  readonly textures: number
+}
+
 /**
- * Three.js Runtime + Game Session 协调器。
- * 不推翻 M1/M2，在其上叠加 M3 的游戏会话与收集系统。
+ * Three.js Runtime + Game Session 协调器（M1 架构保留，M2/M3/M4 增量叠加）。
+ * M4 新增：触控摇杆、画质档位、Esc 快捷键、音效、最高分、性能快照。
  */
 export class GameRuntime {
   private readonly mount: HTMLElement
@@ -47,6 +58,8 @@ export class GameRuntime {
   private readonly world: World
   private readonly player: Player
   private readonly keyboard: KeyboardInput
+  private readonly touch: TouchInput
+  private readonly input: InputManager
   private readonly movement: MovementSystem
   private readonly cameraFollow: CameraFollowSystem
 
@@ -55,13 +68,18 @@ export class GameRuntime {
   private readonly collectibles: Collectible[]
   private readonly collection: CollectionSystem
 
+  private readonly highScore: HighScoreStorage
+  private readonly audio: AudioManager
+
   private readonly resizeObserver: ResizeObserver
   private readonly handleVisibilityChange: () => void
+  private readonly handleKeyDown: (event: KeyboardEvent) => void
 
   private frameId: number | null = null
   private lastFrameTime = 0
   private elapsedSeconds = 0
-  private pixelRatio = 1
+  private currentQuality: GameQuality = DEFAULT_QUALITY
+  private currentPixelRatio = 1
   private destroyed = false
   private readyEmitted = false
   private suppressEvents = false
@@ -77,23 +95,22 @@ export class GameRuntime {
     this.renderer.outputColorSpace = SRGBColorSpace
     this.renderer.toneMapping = ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.05
-    this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = PCFShadowMap
 
     this.scene = new Scene()
     this.scene.background = new Color('#050a14')
-    this.scene.fog = new Fog('#050a14', 34, 80)
 
     this.camera = new PerspectiveCamera(CAMERA_FOV, 16 / 9, CAMERA_NEAR, CAMERA_FAR)
 
     this.world = createWorld()
     this.scene.add(this.world.root)
 
-    // 玩家（M2）
     this.player = new Player()
     this.scene.add(this.player.object)
 
+    // M4 输入整合：KeyboardInput + TouchInput → InputManager
     this.keyboard = new KeyboardInput(window)
+    this.touch = new TouchInput()
+    this.input = new InputManager(this.keyboard, this.touch)
     this.movement = new MovementSystem(this.player)
     this.cameraFollow = new CameraFollowSystem(this.camera)
     this.cameraFollow.snapTo(this.player.object.position)
@@ -109,7 +126,7 @@ export class GameRuntime {
       return c
     })
 
-    // GameSession（M3）—— 纯逻辑，事件转发给 Vue
+    // GameSession（M3）
     this.session = new GameSession({
       onStateChanged: (s) => this.emit({ type: 'STATE_CHANGED', state: s }),
       onScoreChanged: (score, collected) => {
@@ -121,10 +138,11 @@ export class GameRuntime {
           score,
         })
       },
-      onTimerUpdated: (remainingSeconds) =>
-        this.emit({ type: 'TIMER_UPDATED', remainingSeconds }),
+      onTimerUpdated: (remainingSeconds) => this.emit({ type: 'TIMER_UPDATED', remainingSeconds }),
       onGameWon: () => {
         const snap = this.session.snapshot
+        this.highScore.tryUpdate(snap.score)
+        this.audio.playWin()
         this.emit({
           type: 'GAME_WON',
           score: snap.score,
@@ -134,6 +152,8 @@ export class GameRuntime {
       },
       onGameOver: () => {
         const snap = this.session.snapshot
+        this.highScore.tryUpdate(snap.score)
+        this.audio.playLose()
         this.emit({
           type: 'GAME_OVER',
           score: snap.score,
@@ -145,17 +165,56 @@ export class GameRuntime {
       onRestarted: () => this.emit({ type: 'RESTARTED' }),
     })
 
-    // CollectionSystem（M3）
-    this.collection = new CollectionSystem(this.session)
+    // CollectionSystem：收集时播放音效
+    this.collection = new CollectionSystem(this.session, {
+      onCollected: () => {
+        this.audio.playCollect()
+      },
+    })
 
-    // 页面切换后台自动暂停
+    // 最高分
+    this.highScore = new HighScoreStorage()
+
+    // 音效（需等用户交互后 unlock）
+    this.audio = new AudioManager()
+
+    // 页面切换后台自动暂停 + 清理输入
     this.handleVisibilityChange = () => {
-      if (document.hidden && this.session.currentState === 'playing') {
-        this.session.pause()
-        this.keyboard.setEnabled(false)
+      if (document.hidden) {
+        this.input.setEnabled(false)
+        if (this.session.currentState === 'playing') {
+          this.session.pause()
+        }
       }
     }
     document.addEventListener('visibilitychange', this.handleVisibilityChange)
+
+    // M4 Esc 快捷键
+    this.handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.code !== 'Escape') return
+      // 焦点在 input/textarea/contenteditable 时不劫持
+      const target = event.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+      }
+      // unlock audio（Esc 也算用户交互）
+      this.audio.unlock()
+
+      const state = this.session.currentState
+      if (state === 'playing') {
+        if (this.session.pause()) this.input.setEnabled(false)
+      } else if (state === 'paused') {
+        if (this.session.resume()) {
+          this.input.setEnabled(true)
+          this.lastFrameTime = performance.now()
+        }
+      }
+    }
+    window.addEventListener('keydown', this.handleKeyDown)
+
+    // 应用画质
+    this.applyQuality(DEFAULT_QUALITY)
 
     this.mount.appendChild(this.renderer.domElement)
 
@@ -168,27 +227,28 @@ export class GameRuntime {
   command(command: GameCommand): void {
     if (this.destroyed) return
 
+    // 任何命令到达都视为用户交互，unlock audio
+    this.audio.unlock()
+
     switch (command.type) {
       case 'START': {
         if (this.session.currentState === 'menu') {
-          this.session.start() // menu → loading
-          // 立即准备场景并进入 playing
+          this.session.start()
           this.resetForNewGame()
-          this.session.notifyReady() // loading → playing
-          this.keyboard.setEnabled(true)
+          this.session.notifyReady()
+          this.input.setEnabled(true)
         }
         break
       }
       case 'PAUSE': {
         if (this.session.pause()) {
-          this.keyboard.setEnabled(false)
+          this.input.setEnabled(false)
         }
         break
       }
       case 'RESUME': {
         if (this.session.resume()) {
-          this.keyboard.setEnabled(true)
-          // 避免暂停后第一帧的异常 delta：重置 lastFrameTime
+          this.input.setEnabled(true)
           this.lastFrameTime = performance.now()
         }
         break
@@ -197,21 +257,22 @@ export class GameRuntime {
         if (this.session.restart()) {
           this.resetForNewGame()
           this.session.notifyReady()
-          this.keyboard.setEnabled(true)
+          this.input.setEnabled(true)
         }
         break
       }
       case 'EXIT_TO_MENU': {
         if (this.session.exitToMenu()) {
-          this.keyboard.setEnabled(false)
+          this.input.setEnabled(false)
           this.movement.reset()
           this.cameraFollow.snapTo(this.player.object.position)
         }
         break
       }
-      case 'SET_QUALITY':
-        // 暂不实现画质档位，M4 处理
+      case 'SET_QUALITY': {
+        this.applyQuality(command.quality)
         break
+      }
     }
   }
 
@@ -237,6 +298,32 @@ export class GameRuntime {
     this.command({ type: 'EXIT_TO_MENU' })
   }
 
+  /** 当前最高分，读取 localStorage。 */
+  getHighScore(): number {
+    return this.highScore.get()
+  }
+
+  /** 触控摇杆逻辑接收器，供 TouchControls.vue 注入。 */
+  getTouchReceiver(): TouchInput {
+    return this.touch
+  }
+
+  /** 音频管理器，供 UI 切换静音。 */
+  getAudioManager(): AudioManager {
+    return this.audio
+  }
+
+  /** 性能快照（开发模式面板使用）。 */
+  getPerformanceStats(): PerformanceStats {
+    const info = this.renderer.info
+    return {
+      drawCalls: info.render.calls,
+      triangles: info.render.triangles,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+    }
+  }
+
   /** 启动渲染循环（幂等）。 */
   start(): void {
     if (this.destroyed || this.frameId !== null) return
@@ -258,8 +345,11 @@ export class GameRuntime {
     if (this.destroyed) return
     this.destroyed = true
 
+    window.removeEventListener('keydown', this.handleKeyDown)
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
+    this.input.setEnabled(false)
     this.keyboard.destroy()
+    this.audio.dispose()
 
     if (this.frameId !== null) {
       cancelAnimationFrame(this.frameId)
@@ -288,6 +378,52 @@ export class GameRuntime {
     for (const c of this.collectibles) c.reset()
   }
 
+  /** 应用画质档位（构造时 + 运行时 SET_QUALITY 命令调用）。 */
+  private applyQuality(quality: GameQuality): void {
+    const settings = QUALITY_PRESETS[quality]
+    if (!settings) return
+
+    this.currentQuality = quality
+
+    // 1. 渲染器阴影
+    this.renderer.shadowMap.enabled = settings.shadowsEnabled
+    if (settings.shadowsEnabled) {
+      this.renderer.shadowMap.type = PCFShadowMap
+    }
+
+    // 2. 更新场景中 DirectionalLight 的阴影（来自 createWorld）
+    this.applyShadowToWorld(settings)
+
+    // 3. 雾效
+    this.scene.fog = new Fog('#050a14', settings.fogNear, settings.fogFar)
+
+    // 4. pixelRatio 上限：resize 里会重新 clamp 并调用 setPixelRatio
+    this.resize()
+  }
+
+  private applyShadowToWorld(settings: QualitySettings): void {
+    // 遍历 world.root 找 DirectionalLight 并更新
+    this.world.root.traverse((obj) => {
+      const anyObj = obj as unknown as {
+        isDirectionalLight?: boolean
+        castShadow?: boolean
+        shadow?: {
+          mapSize: { set: (w: number, h: number) => void; width?: number; height?: number }
+          bias?: number
+        }
+      }
+      if (anyObj.isDirectionalLight) {
+        anyObj.castShadow = settings.shadowsEnabled
+        if (settings.shadowsEnabled && anyObj.shadow) {
+          anyObj.shadow.mapSize.set(settings.shadowMapSize, settings.shadowMapSize)
+          anyObj.shadow.bias = settings.shadowBias
+          // 重新激活 shadow map（有的 Three.js 版本需要显式 needsUpdate）
+          ;(anyObj.shadow as unknown as { needsUpdate?: boolean }).needsUpdate = true
+        }
+      }
+    })
+  }
+
   private readonly tick = (time: number): void => {
     if (this.destroyed) return
 
@@ -296,20 +432,17 @@ export class GameRuntime {
 
     const state = this.session.currentState
 
-    // 晶体动画：loading / playing / paused 都要继续播放（让玩家在暂停或结算时也能看到）
     if (state !== 'menu' && state !== 'error') {
       this.elapsedSeconds += deltaSeconds
       for (const c of this.collectibles) c.update(deltaSeconds, this.elapsedSeconds)
     }
 
-    // World 动画（中央能量晶体）只在活跃或暂停时播放
     if (state === 'playing' || state === 'paused') {
       this.world.update(deltaSeconds)
     }
 
     if (state === 'playing') {
-      // 输入 → 移动 → 收集 → 时间
-      this.movement.update(deltaSeconds, this.keyboard.direction)
+      this.movement.update(deltaSeconds, this.input.direction)
 
       const { x: px, z: pz } = this.player.object.position
       this.collection.update(px, pz, this.collectibles)
@@ -317,7 +450,6 @@ export class GameRuntime {
       this.session.update(deltaSeconds)
     }
 
-    // 摄像机在任何状态下都保持平滑跟随（除了 menu）
     if (state !== 'menu' && state !== 'loading') {
       this.cameraFollow.update(this.player.object.position, deltaSeconds)
     }
@@ -334,10 +466,11 @@ export class GameRuntime {
     const height = this.mount.clientHeight
     if (width === 0 || height === 0) return
 
-    const nextPixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO)
-    if (nextPixelRatio !== this.pixelRatio) {
-      this.pixelRatio = nextPixelRatio
-      this.renderer.setPixelRatio(nextPixelRatio)
+    const settings = QUALITY_PRESETS[this.currentQuality]
+    const dpr = Math.min(window.devicePixelRatio || 1, settings.maxPixelRatio)
+    if (dpr !== this.currentPixelRatio) {
+      this.currentPixelRatio = dpr
+      this.renderer.setPixelRatio(dpr)
     }
 
     this.camera.aspect = width / height

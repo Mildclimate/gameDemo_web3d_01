@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { TOTAL_COLLECTIBLES } from './game/config/gameConfig'
 import GameMenu from './components/GameMenu.vue'
 import GameViewport from './components/GameViewport.vue'
-import type { GameEvent, GameState } from './types/game'
+import TouchControls from './components/TouchControls.vue'
+import type { AudioManager } from './game/audio/AudioManager'
+import type { TouchInput } from './game/input/TouchInput'
+import type { GameEvent, GameQuality, GameState } from './types/game'
 
 const viewportRef = ref<InstanceType<typeof GameViewport> | null>(null)
 
@@ -16,6 +19,19 @@ const remainingSeconds = ref(120)
 const finalScore = ref(0)
 const finalCollected = ref(0)
 const hasEnded = ref(false)
+const highScore = ref(0)
+const currentQuality = ref<GameQuality>('medium')
+const isMuted = ref(false)
+
+// 开发模式性能面板
+const IS_DEV = import.meta.env.DEV
+const devStats = ref({ drawCalls: 0, triangles: 0, geometries: 0, textures: 0 })
+const devPanelVisible = ref(IS_DEV) // 默认开发模式显示
+let devPanelTimer: ReturnType<typeof setInterval> | null = null
+
+// 运行时引用
+let touchReceiver: TouchInput | null = null
+let audio: AudioManager | null = null
 
 const total = TOTAL_COLLECTIBLES
 
@@ -35,13 +51,34 @@ const formattedTime = computed(() => {
 
 const isLowTime = computed(() => remainingSeconds.value <= 15)
 
+function loadRuntime(): void {
+  const rt = viewportRef.value?.getRuntime()
+  if (!rt) return
+  touchReceiver = rt.getTouchReceiver()
+  audio = rt.getAudioManager()
+  highScore.value = rt.getHighScore()
+}
+
+function refreshHighScore(): void {
+  highScore.value = viewportRef.value?.getRuntime()?.getHighScore() ?? highScore.value
+}
+
+function toggleMute(): void {
+  audio?.unlock()
+  isMuted.value = audio?.toggleMute() ?? false
+}
+
+function applyQuality(quality: GameQuality): void {
+  currentQuality.value = quality
+  viewportRef.value?.sendCommand({ type: 'SET_QUALITY', quality })
+}
+
 // ---------- 命令转发 ----------
 function send(type: 'START' | 'PAUSE' | 'RESUME' | 'RESTART' | 'EXIT_TO_MENU'): void {
   viewportRef.value?.sendCommand({ type })
 }
 
 function handleStart(): void {
-  // 重置 UI 状态
   score.value = 0
   collected.value = 0
   hasEnded.value = false
@@ -75,6 +112,10 @@ function handleRuntimeEvent(event: GameEvent): void {
       if (event.state === 'playing') {
         hasEnded.value = false
       }
+      if (event.state === 'menu') {
+        // 回到菜单时刷新最高分
+        refreshHighScore()
+      }
       break
     case 'SCORE_CHANGED':
       score.value = event.score
@@ -87,24 +128,76 @@ function handleRuntimeEvent(event: GameEvent): void {
       finalScore.value = event.score
       finalCollected.value = event.collected
       hasEnded.value = true
+      // 结算后刷新最高分
+      refreshHighScore()
       break
     case 'GAME_OVER':
       finalScore.value = event.score
       finalCollected.value = event.collected
       hasEnded.value = true
+      refreshHighScore()
       break
     case 'EXIT_TO_MENU':
       gameState.value = 'menu'
       score.value = 0
       collected.value = 0
+      refreshHighScore()
       break
     case 'RESTARTED':
-      // 等待下一次 STATE_CHANGED
       break
     default:
       break
   }
 }
+
+// ---------- 开发模式性能面板 ----------
+function startDevStatsTimer(): void {
+  if (!import.meta.env.DEV) return
+  if (devPanelTimer !== null) return
+  devPanelTimer = setInterval(() => {
+    const stats = viewportRef.value?.getPerformanceStats()
+    if (stats) devStats.value = stats
+  }, 500)
+}
+
+function stopDevStatsTimer(): void {
+  if (devPanelTimer !== null) {
+    clearInterval(devPanelTimer)
+    devPanelTimer = null
+  }
+}
+
+function handleDevPanelToggle(event: KeyboardEvent): void {
+  if (!import.meta.env.DEV) return
+  if (event.code !== 'KeyF2') return
+  devPanelVisible.value = !devPanelVisible.value
+}
+
+watch(showSuccess, (v) => {
+  if (v) refreshHighScore()
+})
+watch(showFailed, (v) => {
+  if (v) refreshHighScore()
+})
+
+onMounted(() => {
+  // GameViewport 在 GameRuntime 构造后即 ready，loadRuntime 可能需要稍后
+  // 但为了避免时序问题，我们在第一个事件回调里也调用 loadRuntime
+  window.addEventListener('keydown', handleDevPanelToggle)
+  startDevStatsTimer()
+
+  // 延迟一帧确保 GameRuntime 已构造
+  requestAnimationFrame(() => {
+    loadRuntime()
+    refreshHighScore()
+    if (audio) isMuted.value = audio.isMuted
+  })
+})
+
+onBeforeUnmount(() => {
+  stopDevStatsTimer()
+  window.removeEventListener('keydown', handleDevPanelToggle)
+})
 </script>
 
 <template>
@@ -114,7 +207,31 @@ function handleRuntimeEvent(event: GameEvent): void {
         <span class="app-brand__mark" aria-hidden="true"></span>
         ASTRA: Lost Relic
       </p>
-      <span class="app-phase">M3 · 游戏闭环</span>
+      <div class="app-header__controls">
+        <!-- 画质选择（所有状态显示，切档位即时生效） -->
+        <div class="quality-switch" role="radiogroup" aria-label="画质档位">
+          <button
+            v-for="q in ['low', 'medium', 'high'] as GameQuality[]"
+            :key="q"
+            class="quality-switch__btn"
+            :class="{ 'quality-switch__btn--active': currentQuality === q }"
+            type="button"
+            @click="applyQuality(q)"
+          >
+            {{ q.toUpperCase() }}
+          </button>
+        </div>
+        <button
+          class="mute-btn"
+          type="button"
+          :aria-pressed="isMuted"
+          :title="isMuted ? '取消静音' : '静音'"
+          @click="toggleMute"
+        >
+          {{ isMuted ? '🔇' : '🔊' }}
+        </button>
+        <span class="app-phase">M4 · 交互优化</span>
+      </div>
     </header>
 
     <main class="game-stage">
@@ -122,7 +239,14 @@ function handleRuntimeEvent(event: GameEvent): void {
         <GameViewport ref="viewportRef" @event="handleRuntimeEvent" />
 
         <!-- ========== 菜单 ========== -->
-        <GameMenu v-if="showMenu" @start="handleStart" />
+        <GameMenu v-if="showMenu" @start="handleStart" :high-score="highScore" />
+
+        <!-- ========== 触控摇杆 ========== -->
+        <TouchControls
+          v-if="touchReceiver"
+          :receiver="touchReceiver"
+          :enabled="gameState === 'playing' || gameState === 'paused'"
+        />
 
         <!-- ========== Playing HUD ========== -->
         <div v-if="showHud" class="game-hud">
@@ -145,7 +269,7 @@ function handleRuntimeEvent(event: GameEvent): void {
           </div>
 
           <div class="hud-bottom">
-            <p class="hud-hint"><kbd>WASD</kbd> / <kbd>方向键</kbd> 移动</p>
+            <p class="hud-hint"><kbd>WASD</kbd> / <kbd>方向键</kbd> 移动 · <kbd>Esc</kbd> 暂停</p>
             <div class="hud-actions">
               <button class="hud-btn" type="button" @click="handlePause">暂停</button>
               <button class="hud-btn hud-btn--exit" type="button" @click="handleExit">
@@ -177,6 +301,10 @@ function handleRuntimeEvent(event: GameEvent): void {
               </div>
             </div>
 
+            <p class="overlay__note" v-if="highScore > 0">
+              本地最高分：<strong>{{ highScore }}</strong>
+            </p>
+
             <div class="overlay__actions">
               <button class="overlay-btn overlay-btn--primary" type="button" @click="handleResume">
                 继续游戏
@@ -207,6 +335,10 @@ function handleRuntimeEvent(event: GameEvent): void {
               </div>
             </div>
 
+            <p class="overlay__note" v-if="highScore > 0">
+              本地最高分：<strong>{{ highScore }}</strong>
+            </p>
+
             <div class="overlay__actions">
               <button class="overlay-btn overlay-btn--primary" type="button" @click="handleRestart">
                 再玩一次
@@ -236,6 +368,10 @@ function handleRuntimeEvent(event: GameEvent): void {
               </div>
             </div>
 
+            <p class="overlay__note" v-if="highScore > 0">
+              本地最高分：<strong>{{ highScore }}</strong>
+            </p>
+
             <div class="overlay__actions">
               <button class="overlay-btn overlay-btn--primary" type="button" @click="handleRestart">
                 重新开始
@@ -246,12 +382,29 @@ function handleRuntimeEvent(event: GameEvent): void {
             </div>
           </div>
         </div>
+
+        <!-- ========== 开发模式性能面板 ========== -->
+        <div v-if="IS_DEV && devPanelVisible" class="dev-stats" aria-label="开发模式性能">
+          <div class="dev-stats__row">
+            <span>Draw Calls</span><span>{{ devStats.drawCalls }}</span>
+          </div>
+          <div class="dev-stats__row">
+            <span>Triangles</span><span>{{ devStats.triangles.toLocaleString() }}</span>
+          </div>
+          <div class="dev-stats__row">
+            <span>Geometries</span><span>{{ devStats.geometries }}</span>
+          </div>
+          <div class="dev-stats__row">
+            <span>Textures</span><span>{{ devStats.textures }}</span>
+          </div>
+          <div class="dev-stats__hint">F2 切换面板</div>
+        </div>
       </div>
     </main>
 
     <footer class="app-footer">
       <span>Vue 3 · TypeScript · Three.js</span>
-      <span>完整游戏玩法闭环已接入</span>
+      <span v-if="highScore > 0">本地最高分：{{ highScore }}</span>
     </footer>
   </div>
 </template>
@@ -289,6 +442,12 @@ function handleRuntimeEvent(event: GameEvent): void {
   box-shadow: 0 0 12px var(--color-accent-soft);
 }
 
+.app-header__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .app-phase {
   padding: 4px 10px;
   font-size: 0.72rem;
@@ -296,6 +455,48 @@ function handleRuntimeEvent(event: GameEvent): void {
   color: var(--color-text-muted);
   border: 1px solid var(--color-border);
   border-radius: 999px;
+}
+
+.quality-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(9, 17, 31, 0.72);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.quality-switch__btn {
+  padding: 3px 10px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    background var(--transition-base),
+    color var(--transition-base);
+}
+
+.quality-switch__btn:hover {
+  color: var(--color-text);
+}
+
+.quality-switch__btn--active {
+  color: #021018;
+  background: linear-gradient(135deg, #7df3ff, #35c6e8);
+}
+
+.mute-btn {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  background: rgba(9, 17, 31, 0.72);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
 }
 
 .game-stage {
@@ -410,8 +611,13 @@ function handleRuntimeEvent(event: GameEvent): void {
 }
 
 @keyframes hud-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 .hud-bottom {
@@ -545,6 +751,18 @@ function handleRuntimeEvent(event: GameEvent): void {
   margin-top: 18px;
 }
 
+.overlay__note {
+  margin-top: 14px;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.overlay__note strong {
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}
+
 .hud-stat--inline {
   background: rgba(0, 0, 0, 0.2);
 }
@@ -634,6 +852,41 @@ function handleRuntimeEvent(event: GameEvent): void {
   border-style: solid;
 }
 
+/* ==================== 开发模式性能面板 ==================== */
+.dev-stats {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+  padding: 10px 14px;
+  font-size: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #9df6ff;
+  background: rgba(0, 10, 18, 0.82);
+  border: 1px solid rgba(95, 230, 255, 0.35);
+  border-radius: 6px;
+  line-height: 1.5;
+  pointer-events: none;
+  user-select: none;
+}
+
+.dev-stats__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.dev-stats__row span:first-child {
+  color: var(--color-text-muted);
+}
+
+.dev-stats__hint {
+  margin-top: 6px;
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
 /* ==================== Mobile ==================== */
 @media (max-width: 760px) {
   .app-shell {
@@ -647,6 +900,19 @@ function handleRuntimeEvent(event: GameEvent): void {
 
   .app-brand {
     font-size: 0.8rem;
+  }
+
+  .app-header__controls {
+    gap: 8px;
+  }
+
+  .app-phase {
+    display: none;
+  }
+
+  .quality-switch__btn {
+    padding: 3px 7px;
+    font-size: 0.6rem;
   }
 
   .game-stage {

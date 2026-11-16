@@ -27,7 +27,9 @@ describe('collision — arena bounds', () => {
 describe('collision — push out of box obstacle', () => {
   it('circle is pushed out of box center', () => {
     const bounds = createArenaBounds(octagon(), 0.45)
-    const obstacles = [{ kind: 'box' as const, x: 0, z: 0, halfWidth: 1, halfDepth: 1, rotation: 0 }]
+    const obstacles = [
+      { kind: 'box' as const, x: 0, z: 0, halfWidth: 1, halfDepth: 1, rotation: 0 },
+    ]
 
     const result = resolveCollisions(0, 0, 0.45, bounds, obstacles)
     // After push, the circle center must be pushed out of the box along the axis of least penetration
@@ -78,14 +80,7 @@ describe('collision — zero displacement returns same position', () => {
   it('no move means no change', () => {
     const bounds = createArenaBounds(octagon(), 0.45)
 
-    const result = moveWithCollisions(
-      { x: 3, z: 4 },
-      { x: 0, z: 0 },
-      0.45,
-      bounds,
-      [],
-      0.15,
-    )
+    const result = moveWithCollisions({ x: 3, z: 4 }, { x: 0, z: 0 }, 0.45, bounds, [], 0.15)
 
     expect(result.x).toBe(3)
     expect(result.z).toBe(4)

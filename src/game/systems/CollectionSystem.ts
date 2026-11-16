@@ -26,11 +26,7 @@ export class CollectionSystem {
    * @param playerZ 玩家世界坐标 z
    * @param collectibles 场景中所有晶体
    */
-  update(
-    playerX: number,
-    playerZ: number,
-    collectibles: ReadonlyArray<Collectible>,
-  ): void {
+  update(playerX: number, playerZ: number, collectibles: ReadonlyArray<Collectible>): void {
     if (!this.session.isActive) return
 
     for (const crystal of collectibles) {

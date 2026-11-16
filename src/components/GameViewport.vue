@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
 
-import { GameRuntime } from '../game/core/GameRuntime'
+import { GameRuntime, type PerformanceStats } from '../game/core/GameRuntime'
 import type { GameCommand, GameEvent } from '../types/game'
 
 const emit = defineEmits<{
@@ -20,7 +20,6 @@ function handleRuntimeEvent(event: GameEvent): void {
     errorMessage.value = event.message
     status.value = 'error'
   }
-  // 所有事件都转发给 App.vue
   emit('event', event)
 }
 
@@ -30,7 +29,16 @@ function sendCommand(command: GameCommand): boolean {
   return true
 }
 
-defineExpose({ sendCommand })
+/** 供 App.vue 调用 runtime 的 getter。 */
+function getRuntime(): GameRuntime | null {
+  return runtime.value
+}
+
+function getPerformanceStats(): PerformanceStats | null {
+  return runtime.value?.getPerformanceStats() ?? null
+}
+
+defineExpose({ sendCommand, getRuntime, getPerformanceStats })
 
 onMounted(() => {
   const mount = mountRef.value
