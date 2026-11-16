@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
 
 import { GameRuntime, type PerformanceStats } from '../game/core/GameRuntime'
 import type { GameCommand, GameEvent } from '../types/game'
+import { t } from '../i18n'
 
 const emit = defineEmits<{
   (e: 'event', event: GameEvent): void
@@ -38,12 +39,16 @@ function getPerformanceStats(): PerformanceStats | null {
   return runtime.value?.getPerformanceStats() ?? null
 }
 
-defineExpose({ sendCommand, getRuntime, getPerformanceStats })
+function getFps(): number {
+  return runtime.value?.getFps() ?? 0
+}
+
+defineExpose({ sendCommand, getRuntime, getPerformanceStats, getFps })
 
 onMounted(() => {
   const mount = mountRef.value
   if (!mount) {
-    errorMessage.value = '未找到 3D 渲染容器。'
+    errorMessage.value = t('viewport.missingMount')
     status.value = 'error'
     return
   }
@@ -54,7 +59,7 @@ onMounted(() => {
     instance.start()
   } catch (error) {
     console.error('[GameViewport] 3D 场景初始化失败', error)
-    errorMessage.value = error instanceof Error ? error.message : 'WebGL 初始化失败。'
+    errorMessage.value = error instanceof Error ? error.message : t('viewport.webglError')
     status.value = 'error'
     runtime.value?.destroy()
     runtime.value = null
@@ -68,7 +73,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="game-viewport" aria-label="3D 游戏渲染区域">
+  <section class="game-viewport" :aria-label="t('viewport.aria')">
     <div ref="mountRef" class="game-viewport__mount"></div>
     <div class="game-viewport__vignette" aria-hidden="true"></div>
 
@@ -79,7 +84,7 @@ onUnmounted(() => {
 
     <div v-if="status === 'loading'" class="game-viewport__overlay" role="status">
       <span class="game-viewport__spinner" aria-hidden="true"></span>
-      <p class="game-viewport__message">正在构建遗迹场景…</p>
+      <p class="game-viewport__message">{{ t('viewport.loading') }}</p>
     </div>
 
     <div
@@ -87,7 +92,7 @@ onUnmounted(() => {
       class="game-viewport__overlay game-viewport__overlay--error"
       role="alert"
     >
-      <p class="game-viewport__message">3D 场景初始化失败</p>
+      <p class="game-viewport__message">{{ t('viewport.errorTitle') }}</p>
       <p class="game-viewport__detail">{{ errorMessage }}</p>
     </div>
   </section>

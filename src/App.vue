@@ -8,6 +8,7 @@ import TouchControls from './components/TouchControls.vue'
 import type { AudioManager } from './game/audio/AudioManager'
 import type { TouchInput } from './game/input/TouchInput'
 import type { GameEvent, GameQuality, GameState } from './types/game'
+import { locale, setLocale, t, type MessageKey } from './i18n'
 
 const viewportRef = ref<InstanceType<typeof GameViewport> | null>(null)
 
@@ -23,11 +24,21 @@ const highScore = ref(0)
 const currentQuality = ref<GameQuality>('medium')
 const isMuted = ref(false)
 
+const QUALITY_OPTIONS: ReadonlyArray<{ value: GameQuality; label: MessageKey }> = [
+  { value: 'low', label: 'app.qualityLow' },
+  { value: 'medium', label: 'app.qualityMedium' },
+  { value: 'high', label: 'app.qualityHigh' },
+]
+
 // 开发模式性能面板
 const IS_DEV = import.meta.env.DEV
 const devStats = ref({ drawCalls: 0, triangles: 0, geometries: 0, textures: 0 })
 const devPanelVisible = ref(IS_DEV) // 默认开发模式显示
 let devPanelTimer: ReturnType<typeof setInterval> | null = null
+
+// FPS（所有模式显示）
+const fps = ref(0)
+let fpsTimer: ReturnType<typeof setInterval> | null = null
 
 // 运行时引用
 let touchReceiver: TouchInput | null = null
@@ -150,9 +161,8 @@ function handleRuntimeEvent(event: GameEvent): void {
   }
 }
 
-// ---------- 开发模式性能面板 ----------
+// ---------- 性能统计 ----------
 function startDevStatsTimer(): void {
-  if (!import.meta.env.DEV) return
   if (devPanelTimer !== null) return
   devPanelTimer = setInterval(() => {
     const stats = viewportRef.value?.getPerformanceStats()
@@ -164,6 +174,21 @@ function stopDevStatsTimer(): void {
   if (devPanelTimer !== null) {
     clearInterval(devPanelTimer)
     devPanelTimer = null
+  }
+}
+
+// ---------- FPS ----------
+function startFpsTimer(): void {
+  if (fpsTimer !== null) return
+  fpsTimer = setInterval(() => {
+    fps.value = viewportRef.value?.getFps() ?? 0
+  }, 200)
+}
+
+function stopFpsTimer(): void {
+  if (fpsTimer !== null) {
+    clearInterval(fpsTimer)
+    fpsTimer = null
   }
 }
 
@@ -185,6 +210,7 @@ onMounted(() => {
   // 但为了避免时序问题，我们在第一个事件回调里也调用 loadRuntime
   window.addEventListener('keydown', handleDevPanelToggle)
   startDevStatsTimer()
+  startFpsTimer()
 
   // 延迟一帧确保 GameRuntime 已构造
   requestAnimationFrame(() => {
@@ -196,6 +222,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopDevStatsTimer()
+  stopFpsTimer()
   window.removeEventListener('keydown', handleDevPanelToggle)
 })
 </script>
@@ -208,29 +235,48 @@ onBeforeUnmount(() => {
         ASTRA: Lost Relic
       </p>
       <div class="app-header__controls">
-        <!-- 画质选择（所有状态显示，切档位即时生效） -->
-        <div class="quality-switch" role="radiogroup" aria-label="画质档位">
+        <!-- 语言切换 -->
+        <div class="quality-switch" role="group" :aria-label="t('app.language')">
           <button
-            v-for="q in ['low', 'medium', 'high'] as GameQuality[]"
-            :key="q"
             class="quality-switch__btn"
-            :class="{ 'quality-switch__btn--active': currentQuality === q }"
+            :class="{ 'quality-switch__btn--active': locale === 'zh' }"
             type="button"
-            @click="applyQuality(q)"
+            @click="setLocale('zh')"
           >
-            {{ q.toUpperCase() }}
+            中
+          </button>
+          <button
+            class="quality-switch__btn"
+            :class="{ 'quality-switch__btn--active': locale === 'en' }"
+            type="button"
+            @click="setLocale('en')"
+          >
+            EN
+          </button>
+        </div>
+        <!-- 画质选择（所有状态显示，切档位即时生效） -->
+        <div class="quality-switch" role="radiogroup" :aria-label="t('app.qualityGroup')">
+          <button
+            v-for="option in QUALITY_OPTIONS"
+            :key="option.value"
+            class="quality-switch__btn"
+            :class="{ 'quality-switch__btn--active': currentQuality === option.value }"
+            type="button"
+            @click="applyQuality(option.value)"
+          >
+            {{ t(option.label) }}
           </button>
         </div>
         <button
           class="mute-btn"
           type="button"
           :aria-pressed="isMuted"
-          :title="isMuted ? '取消静音' : '静音'"
+          :title="isMuted ? t('app.unmute') : t('app.mute')"
           @click="toggleMute"
         >
           {{ isMuted ? '🔇' : '🔊' }}
         </button>
-        <span class="app-phase">M4 · 交互优化</span>
+        <span class="app-phase">{{ t('app.phase') }}</span>
       </div>
     </header>
 
@@ -253,27 +299,32 @@ onBeforeUnmount(() => {
           <div class="hud-top">
             <div class="hud-top__group">
               <div class="hud-stat">
-                <span class="hud-stat__label">SCORE</span>
+                <span class="hud-stat__label">{{ t('hud.score') }}</span>
                 <span class="hud-stat__value">{{ score.toString().padStart(4, '0') }}</span>
               </div>
               <div class="hud-stat">
-                <span class="hud-stat__label">CRYSTALS</span>
+                <span class="hud-stat__label">{{ t('hud.crystals') }}</span>
                 <span class="hud-stat__value">{{ collected }} / {{ total }}</span>
               </div>
             </div>
 
             <div class="hud-timer" :class="{ 'hud-timer--low': isLowTime }">
-              <span class="hud-timer__label">TIME</span>
+              <span class="hud-timer__label">{{ t('hud.time') }}</span>
               <span class="hud-timer__value">{{ formattedTime }}</span>
             </div>
           </div>
 
           <div class="hud-bottom">
-            <p class="hud-hint"><kbd>WASD</kbd> / <kbd>方向键</kbd> 移动 · <kbd>Esc</kbd> 暂停</p>
+            <p class="hud-hint">
+              <kbd>WASD</kbd> / <kbd>{{ t('hud.arrows') }}</kbd> {{ t('hud.move') }} ·
+              <kbd>Esc</kbd> {{ t('hud.pause') }}
+            </p>
             <div class="hud-actions">
-              <button class="hud-btn" type="button" @click="handlePause">暂停</button>
+              <button class="hud-btn" type="button" @click="handlePause">
+                {{ t('hud.pauseButton') }}
+              </button>
               <button class="hud-btn hud-btn--exit" type="button" @click="handleExit">
-                返回大厅
+                {{ t('common.backToLobby') }}
               </button>
             </div>
           </div>
@@ -282,36 +333,38 @@ onBeforeUnmount(() => {
         <!-- ========== Pause Overlay ========== -->
         <div v-if="showPause" class="overlay">
           <div class="overlay__panel">
-            <p class="overlay__eyebrow">SYSTEM</p>
-            <h2 class="overlay__title">PAUSED</h2>
-            <p class="overlay__desc">游戏已暂停。时间已冻结，角色停止响应输入。</p>
+            <p class="overlay__eyebrow">{{ t('pause.eyebrow') }}</p>
+            <h2 class="overlay__title">{{ t('pause.title') }}</h2>
+            <p class="overlay__desc">{{ t('pause.desc') }}</p>
 
             <div class="overlay__stats">
               <div class="hud-stat hud-stat--inline">
-                <span class="hud-stat__label">SCORE</span>
+                <span class="hud-stat__label">{{ t('hud.score') }}</span>
                 <span class="hud-stat__value">{{ score }}</span>
               </div>
               <div class="hud-stat hud-stat--inline">
-                <span class="hud-stat__label">CRYSTALS</span>
+                <span class="hud-stat__label">{{ t('hud.crystals') }}</span>
                 <span class="hud-stat__value">{{ collected }} / {{ total }}</span>
               </div>
               <div class="hud-stat hud-stat--inline">
-                <span class="hud-stat__label">TIME</span>
+                <span class="hud-stat__label">{{ t('hud.time') }}</span>
                 <span class="hud-stat__value">{{ formattedTime }}</span>
               </div>
             </div>
 
             <p class="overlay__note" v-if="highScore > 0">
-              本地最高分：<strong>{{ highScore }}</strong>
+              {{ t('common.bestScore') }}<strong>{{ highScore }}</strong>
             </p>
 
             <div class="overlay__actions">
               <button class="overlay-btn overlay-btn--primary" type="button" @click="handleResume">
-                继续游戏
+                {{ t('pause.resume') }}
               </button>
-              <button class="overlay-btn" type="button" @click="handleRestart">重新开始</button>
+              <button class="overlay-btn" type="button" @click="handleRestart">
+                {{ t('common.restart') }}
+              </button>
               <button class="overlay-btn overlay-btn--ghost" type="button" @click="handleExit">
-                返回大厅
+                {{ t('common.backToLobby') }}
               </button>
             </div>
           </div>
@@ -320,31 +373,31 @@ onBeforeUnmount(() => {
         <!-- ========== Success Overlay ========== -->
         <div v-if="showSuccess" class="overlay overlay--success">
           <div class="overlay__panel">
-            <p class="overlay__eyebrow overlay__eyebrow--success">MISSION COMPLETE</p>
-            <h2 class="overlay__title overlay__title--success">任务完成</h2>
-            <p class="overlay__desc">所有能量晶体已收集。遗迹能量核心已唤醒。</p>
+            <p class="overlay__eyebrow overlay__eyebrow--success">{{ t('success.eyebrow') }}</p>
+            <h2 class="overlay__title overlay__title--success">{{ t('success.title') }}</h2>
+            <p class="overlay__desc">{{ t('success.desc') }}</p>
 
             <div class="overlay__stats">
               <div class="result-stat">
-                <span class="result-stat__label">FINAL SCORE</span>
+                <span class="result-stat__label">{{ t('result.finalScore') }}</span>
                 <span class="result-stat__value">{{ finalScore }}</span>
               </div>
               <div class="result-stat">
-                <span class="result-stat__label">CRYSTALS</span>
+                <span class="result-stat__label">{{ t('hud.crystals') }}</span>
                 <span class="result-stat__value">{{ finalCollected }} / {{ total }}</span>
               </div>
             </div>
 
             <p class="overlay__note" v-if="highScore > 0">
-              本地最高分：<strong>{{ highScore }}</strong>
+              {{ t('common.bestScore') }}<strong>{{ highScore }}</strong>
             </p>
 
             <div class="overlay__actions">
               <button class="overlay-btn overlay-btn--primary" type="button" @click="handleRestart">
-                再玩一次
+                {{ t('success.playAgain') }}
               </button>
               <button class="overlay-btn overlay-btn--ghost" type="button" @click="handleExit">
-                返回大厅
+                {{ t('common.backToLobby') }}
               </button>
             </div>
           </div>
@@ -353,58 +406,73 @@ onBeforeUnmount(() => {
         <!-- ========== Failed Overlay ========== -->
         <div v-if="showFailed" class="overlay overlay--failed">
           <div class="overlay__panel">
-            <p class="overlay__eyebrow overlay__eyebrow--failed">TIME UP</p>
-            <h2 class="overlay__title overlay__title--failed">时间耗尽</h2>
-            <p class="overlay__desc">遗迹能量未能在倒计时结束前激活。</p>
+            <p class="overlay__eyebrow overlay__eyebrow--failed">{{ t('failed.eyebrow') }}</p>
+            <h2 class="overlay__title overlay__title--failed">{{ t('failed.title') }}</h2>
+            <p class="overlay__desc">{{ t('failed.desc') }}</p>
 
             <div class="overlay__stats">
               <div class="result-stat">
-                <span class="result-stat__label">FINAL SCORE</span>
+                <span class="result-stat__label">{{ t('result.finalScore') }}</span>
                 <span class="result-stat__value">{{ finalScore }}</span>
               </div>
               <div class="result-stat">
-                <span class="result-stat__label">CRYSTALS</span>
+                <span class="result-stat__label">{{ t('hud.crystals') }}</span>
                 <span class="result-stat__value">{{ finalCollected }} / {{ total }}</span>
               </div>
             </div>
 
             <p class="overlay__note" v-if="highScore > 0">
-              本地最高分：<strong>{{ highScore }}</strong>
+              {{ t('common.bestScore') }}<strong>{{ highScore }}</strong>
             </p>
 
             <div class="overlay__actions">
               <button class="overlay-btn overlay-btn--primary" type="button" @click="handleRestart">
-                重新开始
+                {{ t('common.restart') }}
               </button>
               <button class="overlay-btn overlay-btn--ghost" type="button" @click="handleExit">
-                返回大厅
+                {{ t('common.backToLobby') }}
               </button>
             </div>
           </div>
         </div>
 
-        <!-- ========== 开发模式性能面板 ========== -->
-        <div v-if="IS_DEV && devPanelVisible" class="dev-stats" aria-label="开发模式性能">
+        <!-- ========== 性能监控（常驻右上角，游玩时下移避开计时器） ========== -->
+        <div class="dev-stats" :class="{ 'dev-stats--hud': showHud }" :aria-label="t('stats.aria')">
           <div class="dev-stats__row">
-            <span>Draw Calls</span><span>{{ devStats.drawCalls }}</span>
+            <span>FPS</span>
+            <span
+              class="dev-stats__value"
+              :class="{
+                'dev-stats__value--warn': fps > 0 && fps < 30,
+                'dev-stats__value--bad': fps > 0 && fps < 20,
+              }"
+              >{{ fps }}</span
+            >
           </div>
           <div class="dev-stats__row">
-            <span>Triangles</span><span>{{ devStats.triangles.toLocaleString() }}</span>
+            <span>{{ t('stats.drawCalls') }}</span>
+            <span class="dev-stats__value">{{ devStats.drawCalls }}</span>
           </div>
-          <div class="dev-stats__row">
-            <span>Geometries</span><span>{{ devStats.geometries }}</span>
-          </div>
-          <div class="dev-stats__row">
-            <span>Textures</span><span>{{ devStats.textures }}</span>
-          </div>
-          <div class="dev-stats__hint">F2 切换面板</div>
+          <template v-if="IS_DEV && devPanelVisible">
+            <div class="dev-stats__row">
+              <span>{{ t('stats.triangles') }}</span>
+              <span>{{ devStats.triangles.toLocaleString() }}</span>
+            </div>
+            <div class="dev-stats__row">
+              <span>{{ t('stats.geometries') }}</span><span>{{ devStats.geometries }}</span>
+            </div>
+            <div class="dev-stats__row">
+              <span>{{ t('stats.textures') }}</span><span>{{ devStats.textures }}</span>
+            </div>
+            <div class="dev-stats__hint">{{ t('stats.hint') }}</div>
+          </template>
         </div>
       </div>
     </main>
 
     <footer class="app-footer">
       <span>Vue 3 · TypeScript · Three.js</span>
-      <span v-if="highScore > 0">本地最高分：{{ highScore }}</span>
+      <span v-if="highScore > 0">{{ t('footer.bestScore', { score: highScore }) }}</span>
     </footer>
   </div>
 </template>
@@ -852,7 +920,7 @@ onBeforeUnmount(() => {
   border-style: solid;
 }
 
-/* ==================== 开发模式性能面板 ==================== */
+/* ==================== 性能监控（右上角） ==================== */
 .dev-stats {
   position: absolute;
   top: 10px;
@@ -870,6 +938,11 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
+/* 游玩时 HUD 右上角有计时器，面板下移让出位置 */
+.dev-stats.dev-stats--hud {
+  top: calc(clamp(12px, 2vw, 20px) + 72px);
+}
+
 .dev-stats__row {
   display: flex;
   justify-content: space-between;
@@ -878,6 +951,23 @@ onBeforeUnmount(() => {
 
 .dev-stats__row span:first-child {
   color: var(--color-text-muted);
+}
+
+.dev-stats__row:first-child .dev-stats__value {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.dev-stats__value {
+  font-variant-numeric: tabular-nums;
+}
+
+.dev-stats__value--warn {
+  color: #ffc94d;
+}
+
+.dev-stats__value--bad {
+  color: #ff7c7c;
 }
 
 .dev-stats__hint {

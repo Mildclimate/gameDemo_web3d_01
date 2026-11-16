@@ -17,6 +17,8 @@ import { ARENA } from './arenaLayout'
 
 export interface World {
   readonly root: Group
+  /** 可能挡住角色的实体（边界墙、遗迹、石柱等），供遮挡透明系统使用。 */
+  readonly occluders: readonly Mesh[]
   update(deltaSeconds: number): void
 }
 
@@ -55,6 +57,8 @@ function createMaterials() {
 export function createWorld(): World {
   const root = new Group()
   root.name = 'world'
+
+  const occluders: Mesh[] = []
 
   const materials = createMaterials()
   const unitBox = new BoxGeometry(1, 1, 1)
@@ -127,22 +131,26 @@ export function createWorld(): World {
     const x = Math.sin(angle) * boundaryRadius
     const z = Math.cos(angle) * boundaryRadius
 
-    addBox(
-      root,
-      materials.stone,
-      [ARENA.wallWidth, height, ARENA.wallThickness],
-      [x, height / 2, z],
-      angle,
+    occluders.push(
+      addBox(
+        root,
+        materials.stone,
+        [ARENA.wallWidth, height, ARENA.wallThickness],
+        [x, height / 2, z],
+        angle,
+      ),
     )
 
     if (index % 2 === 0) {
       const trimRadius = boundaryRadius - 0.28
-      addBox(
-        root,
-        materials.trim,
-        [4.6, 0.07, 0.16],
-        [Math.sin(angle) * trimRadius, height - 0.22, Math.cos(angle) * trimRadius],
-        angle,
+      occluders.push(
+        addBox(
+          root,
+          materials.trim,
+          [4.6, 0.07, 0.16],
+          [Math.sin(angle) * trimRadius, height - 0.22, Math.cos(angle) * trimRadius],
+          angle,
+        ),
       )
     }
   }
@@ -185,6 +193,11 @@ export function createWorld(): World {
     addBox(ruins, materials.stone, [size, size * 0.75, size * 0.9], [x, size * 0.375, z], rotation)
   }
 
+  // 遗迹中的实心 Mesh 都可能挡住角色，统一登记为遮挡体
+  ruins.traverse((child) => {
+    if (child instanceof Mesh) occluders.push(child)
+  })
+
   // 中心视觉焦点：祭坛、能量环与悬浮晶体
   const relic = new Group()
   relic.name = 'relic'
@@ -198,8 +211,8 @@ export function createWorld(): World {
     const angle = (index / pylonCount) * Math.PI * 2 + Math.PI / 4
     const x = Math.cos(angle) * 2.35
     const z = Math.sin(angle) * 2.35
-    addBox(relic, materials.metal, [0.36, 2.1, 0.36], [x, 1.35, z])
-    addBox(relic, materials.trim, [0.36, 0.14, 0.36], [x, 2.45, z])
+    occluders.push(addBox(relic, materials.metal, [0.36, 2.1, 0.36], [x, 1.35, z]))
+    occluders.push(addBox(relic, materials.trim, [0.36, 0.14, 0.36], [x, 2.45, z]))
   }
 
   const innerRing = new Mesh(new TorusGeometry(1.7, 0.055, 8, 72), materials.trim)
@@ -249,6 +262,7 @@ export function createWorld(): World {
 
   return {
     root,
+    occluders,
     update(deltaSeconds: number): void {
       elapsedSeconds += deltaSeconds
 

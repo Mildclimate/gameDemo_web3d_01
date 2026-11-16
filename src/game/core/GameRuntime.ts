@@ -23,6 +23,7 @@ import { createWorld, type World } from '../scene/createWorld'
 import { CameraFollowSystem } from '../systems/CameraFollowSystem'
 import { CollectionSystem } from '../systems/CollectionSystem'
 import { MovementSystem } from '../systems/MovementSystem'
+import { OcclusionSystem } from '../systems/OcclusionSystem'
 import { disposeObjectTree } from '../utils/disposeScene'
 import { HighScoreStorage } from '../utils/HighScoreStorage'
 import { AudioManager } from '../audio/AudioManager'
@@ -62,6 +63,7 @@ export class GameRuntime {
   private readonly input: InputManager
   private readonly movement: MovementSystem
   private readonly cameraFollow: CameraFollowSystem
+  private readonly occlusion: OcclusionSystem
 
   private readonly session: GameSession
   private readonly collectiblesRoot: Group
@@ -83,6 +85,11 @@ export class GameRuntime {
   private destroyed = false
   private readyEmitted = false
   private suppressEvents = false
+
+  // FPS 统计
+  private fpsFrameCount = 0
+  private fpsAccumulator = 0
+  private currentFps = 0
 
   constructor({ mount, onEvent }: GameRuntimeOptions) {
     this.mount = mount
@@ -114,6 +121,7 @@ export class GameRuntime {
     this.movement = new MovementSystem(this.player)
     this.cameraFollow = new CameraFollowSystem(this.camera)
     this.cameraFollow.snapTo(this.player.object.position)
+    this.occlusion = new OcclusionSystem(this.camera, this.world.occluders)
 
     // 能量晶体（M3）
     this.collectiblesRoot = new Group()
@@ -324,6 +332,11 @@ export class GameRuntime {
     }
   }
 
+  /** 实时 FPS（每秒更新一次）。 */
+  getFps(): number {
+    return this.currentFps
+  }
+
   /** 启动渲染循环（幂等）。 */
   start(): void {
     if (this.destroyed || this.frameId !== null) return
@@ -430,6 +443,15 @@ export class GameRuntime {
     const deltaSeconds = Math.min((time - this.lastFrameTime) / 1000, MAX_FRAME_DELTA_SECONDS)
     this.lastFrameTime = time
 
+    // FPS 统计：每累计 1 秒更新一次 currentFps
+    this.fpsFrameCount += 1
+    this.fpsAccumulator += deltaSeconds
+    if (this.fpsAccumulator >= 1) {
+      this.currentFps = Math.round(this.fpsFrameCount / this.fpsAccumulator)
+      this.fpsFrameCount = 0
+      this.fpsAccumulator = 0
+    }
+
     const state = this.session.currentState
 
     if (state !== 'menu' && state !== 'error') {
@@ -453,6 +475,8 @@ export class GameRuntime {
     if (state !== 'menu' && state !== 'loading') {
       this.cameraFollow.update(this.player.object.position, deltaSeconds)
     }
+
+    this.occlusion.update(this.player.object.position, deltaSeconds)
 
     this.renderer.render(this.scene, this.camera)
 

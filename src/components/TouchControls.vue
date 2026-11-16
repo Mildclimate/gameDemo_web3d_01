@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { TouchInput } from '../game/input/TouchInput'
+import { t } from '../i18n'
 
 const props = defineProps<{
   /** 逻辑层接收器，由 GameRuntime 提供。 */
@@ -182,7 +183,7 @@ onBeforeUnmount(() => {
     class="touch-controls"
     :class="{ 'touch-controls--active': isActive }"
     role="group"
-    aria-label="虚拟摇杆"
+    :aria-label="t('touch.joystick')"
   >
     <div
       ref="baseRef"

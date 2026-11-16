@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t } from '../i18n'
+
 defineProps<{
   highScore?: number
 }>()
@@ -9,24 +11,24 @@ const emit = defineEmits<{ start: [] }>()
 <template>
   <div class="game-menu">
     <section class="game-menu__panel" aria-labelledby="game-menu-title">
-      <p class="game-menu__eyebrow">星球遗迹 · 探索收集</p>
+      <p class="game-menu__eyebrow">{{ t('menu.eyebrow') }}</p>
 
       <h1 id="game-menu-title" class="game-menu__title">
         ASTRA
         <span class="game-menu__title-sub">Lost Relic</span>
       </h1>
 
-      <p class="game-menu__description">
-        在废弃的星际遗迹中探索。使用 WASD 或方向键控制角色移动，摄像机将自动跟随。
-      </p>
+      <p class="game-menu__description">{{ t('menu.description') }}</p>
 
       <div v-if="highScore && highScore > 0" class="game-menu__record">
-        本地最高分：<strong>{{ highScore }}</strong>
+        {{ t('common.bestScore') }}<strong>{{ highScore }}</strong>
       </div>
 
-      <button class="game-menu__start" type="button" @click="emit('start')">开始探索</button>
+      <button class="game-menu__start" type="button" @click="emit('start')">
+        {{ t('menu.start') }}
+      </button>
 
-      <p class="game-menu__note">进入后可随时使用底部按钮返回大厅，或按 Esc 暂停。</p>
+      <p class="game-menu__note">{{ t('menu.note') }}</p>
     </section>
   </div>
 </template>
