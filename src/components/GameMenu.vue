@@ -1,3 +1,7 @@
+<script setup lang="ts">
+const emit = defineEmits<{ start: [] }>()
+</script>
+
 <template>
   <div class="game-menu">
     <section class="game-menu__panel" aria-labelledby="game-menu-title">
@@ -9,12 +13,12 @@
       </h1>
 
       <p class="game-menu__description">
-        在废弃的星际遗迹中收集能量晶体。基础 3D 场景已经就绪，操作与玩法将在后续里程碑接入。
+        在废弃的星际遗迹中探索。使用 WASD 或方向键控制角色移动，摄像机将自动跟随。
       </p>
 
-      <button class="game-menu__start" type="button" disabled>开始探索</button>
+      <button class="game-menu__start" type="button" @click="emit('start')">开始探索</button>
 
-      <p class="game-menu__note">玩法尚未开放，当前可查看基础遗迹场景。</p>
+      <p class="game-menu__note">进入后可随时使用底部按钮返回大厅。</p>
     </section>
   </div>
 </template>
@@ -25,7 +29,7 @@
   inset: 0;
   display: flex;
   align-items: flex-end;
-  justify-content: center;
+  justify-content: flex-start;
   padding: clamp(16px, 3vw, 32px);
   pointer-events: none;
 }
@@ -85,8 +89,23 @@
   background: linear-gradient(135deg, #7df3ff, #35c6e8);
   border: none;
   border-radius: var(--radius-sm);
-  cursor: not-allowed;
-  opacity: 0.45;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(53, 198, 232, 0.28);
+  transition:
+    transform var(--transition-base),
+    box-shadow var(--transition-base),
+    filter var(--transition-base);
+}
+
+.game-menu__start:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(53, 198, 232, 0.38);
+  filter: brightness(1.06);
+}
+
+.game-menu__start:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .game-menu__note {

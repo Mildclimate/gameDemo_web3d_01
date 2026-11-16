@@ -13,13 +13,12 @@ import {
   type Object3D,
 } from 'three'
 
+import { ARENA } from './arenaLayout'
+
 export interface World {
   readonly root: Group
   update(deltaSeconds: number): void
 }
-
-const PLATFORM_RADIUS = 16
-const BOUNDARY_SEGMENTS = 16
 
 function createMaterials() {
   return {
@@ -103,7 +102,7 @@ export function createWorld(): World {
   root.add(platform)
 
   const platformBase = new Mesh(
-    new CylinderGeometry(PLATFORM_RADIUS, PLATFORM_RADIUS * 1.06, 1.4, 8),
+    new CylinderGeometry(ARENA.platformRadius, ARENA.platformRadius * 1.06, 1.4, 8),
     materials.stone,
   )
   platformBase.position.y = -0.7
@@ -121,14 +120,20 @@ export function createWorld(): World {
   platform.add(energyRing)
 
   // 一圈高低错落的边界墙，明确可行走范围
-  const boundaryRadius = PLATFORM_RADIUS - 0.9
-  for (let index = 0; index < BOUNDARY_SEGMENTS; index += 1) {
-    const angle = (index / BOUNDARY_SEGMENTS) * Math.PI * 2
+  const boundaryRadius = ARENA.boundaryRadius
+  for (let index = 0; index < ARENA.boundarySegments; index += 1) {
+    const angle = (index / ARENA.boundarySegments) * Math.PI * 2
     const height = index % 4 === 0 ? 1.15 : 2.05
     const x = Math.sin(angle) * boundaryRadius
     const z = Math.cos(angle) * boundaryRadius
 
-    addBox(root, materials.stone, [5.1, height, 0.6], [x, height / 2, z], angle)
+    addBox(
+      root,
+      materials.stone,
+      [ARENA.wallWidth, height, ARENA.wallThickness],
+      [x, height / 2, z],
+      angle,
+    )
 
     if (index % 2 === 0) {
       const trimRadius = boundaryRadius - 0.28

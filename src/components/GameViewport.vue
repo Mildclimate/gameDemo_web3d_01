@@ -2,13 +2,15 @@
 import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
 
 import { GameRuntime } from '../game/core/GameRuntime'
-import type { GameEvent } from '../types/game'
+import type { GameCommand, GameEvent } from '../types/game'
 
-type ViewportStatus = 'loading' | 'ready' | 'error'
+const emit = defineEmits<{
+  (e: 'event', event: GameEvent): void
+}>()
 
 const mountRef = ref<HTMLDivElement | null>(null)
 const runtime = shallowRef<GameRuntime | null>(null)
-const status = ref<ViewportStatus>('loading')
+const status = ref<'loading' | 'ready' | 'error'>('loading')
 const errorMessage = ref('')
 
 function handleRuntimeEvent(event: GameEvent): void {
@@ -18,7 +20,17 @@ function handleRuntimeEvent(event: GameEvent): void {
     errorMessage.value = event.message
     status.value = 'error'
   }
+  // 所有事件都转发给 App.vue
+  emit('event', event)
 }
+
+function sendCommand(command: GameCommand): boolean {
+  if (!runtime.value || status.value === 'error') return false
+  runtime.value.command(command)
+  return true
+}
+
+defineExpose({ sendCommand })
 
 onMounted(() => {
   const mount = mountRef.value
