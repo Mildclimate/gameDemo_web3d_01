@@ -1,5 +1,9 @@
 # ASTRA: Lost Relic
 
+## 演示
+
+![演示视频](docs/demo.gif)
+
 基于 Vue 3 + TypeScript + Three.js 的 Web 3D 探索收集小游戏。当前完成 **M2：玩家移动与第三人称摄像机**，可在遗迹场景中用 WASD / 方向键控制角色移动，带边界与障碍碰撞，摄像机平滑跟随。收集与计分玩法尚未接入（M3）。
 
 ## 操作
